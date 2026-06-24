@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>GLX Scout — Scanner</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/zxing/0.20.0/umd/index.min.js"></script>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 <style>
   :root {
     --ink: #1a1f16;
@@ -368,12 +368,7 @@
       </svg>
       <div>Cámara apagada.<br>Toca "Escanear" para activarla.</div>
     </div>
-    <video id="video" autoplay muted playsinline style="display:none;"></video>
-    <div class="reticle" id="reticle" style="display:none;">
-      <div class="reticle-box">
-        <div class="scanline"></div>
-      </div>
-    </div>
+    <div id="qrReaderBox" style="width:100%; height:100%; display:none;"></div>
   </div>
 
   <div class="status-line" id="status"></div>
@@ -420,9 +415,7 @@
   let lastScanTime = 0;
   let lastScanCode = '';
 
-  const video = document.getElementById('video');
   const stageOff = document.getElementById('stageOff');
-  const reticle = document.getElementById('reticle');
   const toggleBtn = document.getElementById('toggleBtn');
   const manualBtn = document.getElementById('manualBtn');
   const manualEntry = document.getElementById('manualEntry');
@@ -602,37 +595,45 @@
   }
 
   async function startScanning() {
-    if (!window.ZXingBrowser && !window.ZXing) {
+    if (!window.Html5Qrcode) {
       setStatus('No se pudo cargar el lector de códigos. Usa "Manual" mientras tanto.', 'error');
       return;
     }
     try {
-      const ZXingLib = window.ZXingBrowser || window.ZXing;
-      codeReader = new ZXingLib.BrowserMultiFormatReader();
-
       stageOff.style.display = 'none';
-      video.style.display = 'block';
-      reticle.style.display = 'flex';
+      document.getElementById('qrReaderBox').style.display = 'block';
       scanning = true;
       toggleBtn.textContent = 'Detener';
       toggleBtn.classList.add('is-stop');
       setStatus('Apunta la cámara al código de barras.', '');
 
-      const devices = await ZXingLib.BrowserCodeReader.listVideoInputDevices();
-      let deviceId = null;
-      const back = devices.find(d => /back|rear|environment/i.test(d.label));
-      deviceId = back ? back.deviceId : (devices[0] ? devices[0].deviceId : null);
+      codeReader = new Html5Qrcode('qrReaderBox');
 
-      codeReader.decodeFromVideoDevice(deviceId, video, (result, err) => {
-        if (result) {
-          const text = result.getText();
+      const config = {
+        fps: 10,
+        qrbox: { width: 260, height: 160 },
+        formatsToSupport: [
+          Html5QrcodeSupportedFormats.EAN_13,
+          Html5QrcodeSupportedFormats.EAN_8,
+          Html5QrcodeSupportedFormats.UPC_A,
+          Html5QrcodeSupportedFormats.UPC_E,
+          Html5QrcodeSupportedFormats.CODE_128,
+          Html5QrcodeSupportedFormats.QR_CODE
+        ]
+      };
+
+      await codeReader.start(
+        { facingMode: 'environment' },
+        config,
+        (decodedText) => {
           const now = Date.now();
-          if (text === lastScanCode && (now - lastScanTime) < 3000) return;
-          lastScanCode = text;
+          if (decodedText === lastScanCode && (now - lastScanTime) < 3000) return;
+          lastScanCode = decodedText;
           lastScanTime = now;
-          addScan(text);
-        }
-      });
+          addScan(decodedText);
+        },
+        () => { /* ignorar errores de frame individual, son normales mientras busca el código */ }
+      );
     } catch (e) {
       setStatus('No se pudo acceder a la cámara. Revisa permisos, o usa "Manual".', 'error');
       stopScanning();
@@ -644,11 +645,10 @@
     toggleBtn.textContent = 'Escanear';
     toggleBtn.classList.remove('is-stop');
     stageOff.style.display = 'flex';
-    video.style.display = 'none';
-    reticle.style.display = 'none';
+    document.getElementById('qrReaderBox').style.display = 'none';
     setStatus('', '');
     if (codeReader) {
-      try { codeReader.reset(); } catch (e) {}
+      codeReader.stop().catch(() => {});
       codeReader = null;
     }
   }
