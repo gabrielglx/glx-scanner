@@ -1,0 +1,691 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GLX Scout — Scanner</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/zxing/0.20.0/umd/index.min.js"></script>
+<style>
+  :root {
+    --ink: #1a1f16;
+    --paper: #f4f1ea;
+    --moss: #3d5a3d;
+    --moss-dark: #2a3f2a;
+    --rust: #b5532c;
+    --rust-light: #e8825a;
+    --line: #d8d2c2;
+    --gold: #c9a23f;
+    --error: #a33c2e;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--ink);
+    color: var(--paper);
+    font-family: 'Courier New', Courier, monospace;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .topbar {
+    padding: 18px 20px 14px;
+    border-bottom: 1px solid #3a4232;
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+  }
+
+  .brand {
+    font-family: Georgia, 'Times New Roman', serif;
+    font-size: 19px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    color: var(--paper);
+  }
+  .brand span { color: var(--rust-light); }
+
+  .count-badge {
+    font-size: 12px;
+    letter-spacing: 0.08em;
+    color: #8a9580;
+    text-transform: uppercase;
+  }
+  .count-badge b { color: var(--gold); font-size: 14px; }
+
+  .stage {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    max-height: 60vh;
+    background: #000;
+    overflow: hidden;
+  }
+
+  #video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  .reticle {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+  }
+  .reticle-box {
+    width: 78%;
+    height: 34%;
+    border: 2px solid var(--gold);
+    border-radius: 4px;
+    box-shadow: 0 0 0 2000px rgba(0,0,0,0.38);
+    position: relative;
+  }
+  .reticle-box::before, .reticle-box::after {
+    content: '';
+    position: absolute;
+    width: 22px;
+    height: 22px;
+    border: 3px solid var(--rust-light);
+  }
+  .reticle-box::before { top: -3px; left: -3px; border-right: none; border-bottom: none; }
+  .reticle-box::after { bottom: -3px; right: -3px; border-left: none; border-top: none; }
+
+  .scanline {
+    position: absolute;
+    left: 11%;
+    right: 11%;
+    height: 2px;
+    background: var(--rust-light);
+    box-shadow: 0 0 8px var(--rust-light);
+    animation: sweep 1.8s ease-in-out infinite;
+  }
+  @keyframes sweep {
+    0%, 100% { top: 33%; }
+    50% { top: 64%; }
+  }
+
+  .stage-off {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 14px;
+    color: #6a7560;
+    font-size: 13px;
+    text-align: center;
+    padding: 0 30px;
+  }
+  .stage-off svg { width: 46px; height: 46px; opacity: 0.5; }
+
+  .controls {
+    padding: 16px 20px;
+    display: flex;
+    gap: 10px;
+  }
+
+  button {
+    font-family: 'Courier New', Courier, monospace;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    border: none;
+    cursor: pointer;
+    transition: transform 0.08s ease, opacity 0.15s ease;
+  }
+  button:active { transform: scale(0.97); }
+
+  .btn-primary {
+    flex: 1;
+    background: var(--rust);
+    color: var(--paper);
+    font-size: 14px;
+    padding: 15px 0;
+    border-radius: 3px;
+  }
+  .btn-primary.is-stop { background: #4a4a42; }
+
+  .btn-manual {
+    background: transparent;
+    color: var(--gold);
+    font-size: 12px;
+    padding: 15px 16px;
+    border: 1px solid #4a4a42;
+    border-radius: 3px;
+  }
+
+  .status-line {
+    padding: 0 20px 8px;
+    font-size: 12px;
+    color: #8a9580;
+    min-height: 18px;
+    letter-spacing: 0.02em;
+  }
+  .status-line.is-busy { color: var(--gold); }
+  .status-line.is-error { color: var(--error); }
+  .status-line.is-ok { color: #7ba87b; }
+
+  .manual-entry {
+    padding: 0 20px 14px;
+    display: none;
+  }
+  .manual-entry.is-open { display: flex; gap: 8px; }
+  .manual-entry input {
+    flex: 1;
+    background: #232a1d;
+    border: 1px solid #4a4a42;
+    color: var(--paper);
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 14px;
+    padding: 12px;
+    border-radius: 3px;
+  }
+  .manual-entry input:focus { outline: 1px solid var(--gold); }
+  .manual-entry button {
+    background: var(--moss);
+    color: var(--paper);
+    font-size: 12px;
+    padding: 0 16px;
+    border-radius: 3px;
+  }
+
+  .divider {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 4px 20px 12px;
+    color: #5a6450;
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+  .divider::before, .divider::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: #3a4232;
+  }
+
+  .list-wrap {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0 20px 24px;
+  }
+
+  .empty-state {
+    text-align: center;
+    padding: 40px 10px;
+    color: #5a6450;
+    font-size: 13px;
+    line-height: 1.7;
+  }
+  .empty-state .big {
+    font-family: Georgia, serif;
+    font-size: 15px;
+    color: #8a9580;
+    margin-bottom: 6px;
+    display: block;
+  }
+
+  .card {
+    background: #1f261b;
+    border: 1px solid #313a28;
+    border-left: 3px solid var(--moss);
+    border-radius: 3px;
+    padding: 14px 14px 12px;
+    margin-bottom: 10px;
+    position: relative;
+  }
+  .card.is-pending { border-left-color: var(--gold); }
+  .card.is-failed { border-left-color: var(--error); }
+
+  .card-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 10px;
+    margin-bottom: 8px;
+  }
+
+  .card-title {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--paper);
+    line-height: 1.35;
+    flex: 1;
+  }
+
+  .card-num {
+    font-size: 14px;
+    color: #5a6450;
+    font-weight: 700;
+    min-width: 22px;
+  }
+
+  .card-meta {
+    font-size: 11px;
+    color: #6a7560;
+    letter-spacing: 0.02em;
+    margin-bottom: 10px;
+  }
+  .card-meta .barcode { color: #8a9580; }
+
+  .card-actions {
+    display: flex;
+    gap: 8px;
+  }
+
+  .card-actions a, .card-actions .btn-remove {
+    font-size: 11px;
+    padding: 9px 0;
+    text-align: center;
+    border-radius: 3px;
+    text-decoration: none;
+    flex: 1;
+    letter-spacing: 0.04em;
+  }
+
+  .card-actions a {
+    background: var(--gold);
+    color: var(--ink);
+    font-weight: 700;
+  }
+
+  .btn-remove {
+    background: transparent;
+    border: 1px solid #3a4232;
+    color: #6a7560;
+    flex: 0 0 40px;
+    font-size: 14px;
+  }
+
+  .card-edit-name {
+    width: 100%;
+    background: #232a1d;
+    border: 1px solid #4a4a42;
+    color: var(--paper);
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 13px;
+    padding: 8px 10px;
+    border-radius: 3px;
+    margin-bottom: 10px;
+  }
+  .card-edit-name:focus { outline: 1px solid var(--gold); }
+
+  .toast {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%) translateY(10px);
+    background: var(--moss-dark);
+    border: 1px solid var(--moss);
+    color: var(--paper);
+    font-size: 12px;
+    padding: 10px 18px;
+    border-radius: 4px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease, transform 0.2s ease;
+    z-index: 50;
+    letter-spacing: 0.02em;
+  }
+  .toast.is-visible {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+
+  .clear-row {
+    text-align: center;
+    padding: 6px 0 18px;
+  }
+  .clear-row button {
+    background: none;
+    color: #5a6450;
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-decoration: underline;
+  }
+</style>
+</head>
+<body>
+
+  <div class="topbar">
+    <div class="brand">GLX <span>Scout</span></div>
+    <div class="count-badge">Lista: <b id="countNum">0</b></div>
+  </div>
+
+  <div class="stage" id="stage">
+    <div class="stage-off" id="stageOff">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M3 7V5a2 2 0 0 1 2-2h2M3 17v2a2 2 0 0 0 2 2h2M21 7V5a2 2 0 0 0-2-2h-2M21 17v2a2 2 0 0 1-2 2h-2M7 8v8M11 8v8M14 8v8M17 8v8"/>
+      </svg>
+      <div>Cámara apagada.<br>Toca "Escanear" para activarla.</div>
+    </div>
+    <video id="video" autoplay muted playsinline style="display:none;"></video>
+    <div class="reticle" id="reticle" style="display:none;">
+      <div class="reticle-box">
+        <div class="scanline"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="status-line" id="status"></div>
+
+  <div class="controls">
+    <button class="btn-primary" id="toggleBtn">Escanear</button>
+    <button class="btn-manual" id="manualBtn">Manual</button>
+  </div>
+
+  <div class="manual-entry" id="manualEntry">
+    <input type="text" id="manualInput" placeholder="Código de barras o nombre" inputmode="text">
+    <button id="manualSubmit">Buscar</button>
+  </div>
+
+  <div class="divider">Productos escaneados</div>
+
+  <div class="list-wrap" id="listWrap">
+    <div class="empty-state" id="emptyState">
+      <span class="big">Aún no hay nada aquí</span>
+      Escanea un código y se va a ir acumulando en esta lista —<br>
+      puedes seguir escaneando varios productos seguidos<br>
+      antes de revisar cualquiera en Mercado Libre.
+    </div>
+  </div>
+
+  <div class="clear-row" id="clearRow" style="display:none;">
+    <button id="clearBtn">Borrar toda la lista</button>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+<script>
+(function () {
+  const STORAGE_KEY = 'glx_scout_scans_v1';
+  let items = [];
+  try {
+    const raw = window.localStorage ? window.localStorage.getItem(STORAGE_KEY) : null;
+    if (raw) items = JSON.parse(raw);
+  } catch (e) { items = []; }
+
+  let scanning = false;
+  let codeReader = null;
+  let currentStream = null;
+  let lastScanTime = 0;
+  let lastScanCode = '';
+
+  const video = document.getElementById('video');
+  const stageOff = document.getElementById('stageOff');
+  const reticle = document.getElementById('reticle');
+  const toggleBtn = document.getElementById('toggleBtn');
+  const manualBtn = document.getElementById('manualBtn');
+  const manualEntry = document.getElementById('manualEntry');
+  const manualInput = document.getElementById('manualInput');
+  const manualSubmit = document.getElementById('manualSubmit');
+  const statusEl = document.getElementById('status');
+  const listWrap = document.getElementById('listWrap');
+  const emptyState = document.getElementById('emptyState');
+  const countNum = document.getElementById('countNum');
+  const toast = document.getElementById('toast');
+  const clearRow = document.getElementById('clearRow');
+  const clearBtn = document.getElementById('clearBtn');
+
+  function persist() {
+    try {
+      if (window.localStorage) window.localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+    } catch (e) { /* almacenamiento no disponible, seguimos solo en memoria */ }
+  }
+
+  function setStatus(text, kind) {
+    statusEl.textContent = text || '';
+    statusEl.className = 'status-line' + (kind ? ' is-' + kind : '');
+  }
+
+  function showToast(text) {
+    toast.textContent = text;
+    toast.classList.add('is-visible');
+    setTimeout(() => toast.classList.remove('is-visible'), 1800);
+  }
+
+  function buildMLLink(query) {
+    const slug = query.trim().toLowerCase().replace(/\s+/g, '-');
+    return 'https://listado.mercadolibre.com.mx/' + encodeURIComponent(slug).replace(/%2D/g, '-');
+  }
+
+  function renderList() {
+    listWrap.innerHTML = '';
+    countNum.textContent = items.length;
+
+    if (items.length === 0) {
+      listWrap.appendChild(emptyState);
+      clearRow.style.display = 'none';
+      return;
+    }
+    clearRow.style.display = 'block';
+
+    items.slice().reverse().forEach((item, revIdx) => {
+      const idx = items.length - 1 - revIdx;
+      const card = document.createElement('div');
+      card.className = 'card' + (item.status === 'pending' ? ' is-pending' : '') + (item.status === 'failed' ? ' is-failed' : '');
+
+      const top = document.createElement('div');
+      top.className = 'card-top';
+
+      const num = document.createElement('div');
+      num.className = 'card-num';
+      num.textContent = (idx + 1) + '.';
+      top.appendChild(num);
+
+      const title = document.createElement('div');
+      title.className = 'card-title';
+      if (item.status === 'pending') {
+        title.textContent = 'Buscando nombre del producto...';
+      } else {
+        title.textContent = item.name || '(sin nombre — código no encontrado)';
+      }
+      top.appendChild(title);
+      card.appendChild(top);
+
+      const meta = document.createElement('div');
+      meta.className = 'card-meta';
+      const time = new Date(item.ts).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
+      meta.innerHTML = time + (item.code ? '  ·  <span class="barcode">' + item.code + '</span>' : '  ·  manual');
+      card.appendChild(meta);
+
+      if (item.status !== 'pending') {
+        const editInput = document.createElement('input');
+        editInput.className = 'card-edit-name';
+        editInput.value = item.name || '';
+        editInput.placeholder = 'Escribe o ajusta el nombre del producto';
+        editInput.addEventListener('change', () => {
+          items[idx].name = editInput.value;
+          items[idx].link = buildMLLink(editInput.value || item.code);
+          persist();
+          renderList();
+        });
+        card.appendChild(editInput);
+      }
+
+      const actions = document.createElement('div');
+      actions.className = 'card-actions';
+
+      if (item.status !== 'pending') {
+        const link = document.createElement('a');
+        link.href = item.link;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        link.textContent = 'Ver en Mercado Libre →';
+        actions.appendChild(link);
+      }
+
+      const removeBtn = document.createElement('button');
+      removeBtn.className = 'btn-remove';
+      removeBtn.textContent = '✕';
+      removeBtn.addEventListener('click', () => {
+        items.splice(idx, 1);
+        persist();
+        renderList();
+      });
+      actions.appendChild(removeBtn);
+
+      card.appendChild(actions);
+      listWrap.appendChild(card);
+    });
+  }
+
+  async function lookupBarcode(code) {
+    try {
+      const resp = await fetch('https://api.upcitemdb.com/prod/trial/lookup?upc=' + encodeURIComponent(code));
+      if (!resp.ok) return null;
+      const data = await resp.json();
+      if (data && data.items && data.items.length > 0 && data.items[0].title) {
+        return data.items[0].title;
+      }
+      return null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  async function addScan(code) {
+    const entry = { code: code, name: '', link: '', status: 'pending', ts: Date.now() };
+    items.push(entry);
+    persist();
+    renderList();
+    setStatus('Buscando "' + code + '" en base de productos...', 'busy');
+
+    const name = await lookupBarcode(code);
+    const idx = items.indexOf(entry);
+    if (idx === -1) return;
+
+    if (name) {
+      items[idx].name = name;
+      items[idx].link = buildMLLink(name);
+      items[idx].status = 'ok';
+      setStatus('Encontrado: ' + name, 'ok');
+      showToast('Agregado a la lista');
+    } else {
+      items[idx].name = '';
+      items[idx].link = buildMLLink(code);
+      items[idx].status = 'failed';
+      setStatus('No se encontró el nombre — escríbelo a mano en la tarjeta.', 'error');
+      showToast('Código no encontrado, edítalo abajo');
+    }
+    persist();
+    renderList();
+  }
+
+  function addManual(text) {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    const isBarcode = /^\d{6,14}$/.test(trimmed);
+    if (isBarcode) {
+      addScan(trimmed);
+    } else {
+      items.push({
+        code: '',
+        name: trimmed,
+        link: buildMLLink(trimmed),
+        status: 'ok',
+        ts: Date.now()
+      });
+      persist();
+      renderList();
+      showToast('Agregado a la lista');
+    }
+  }
+
+  async function startScanning() {
+    if (!window.ZXingBrowser && !window.ZXing) {
+      setStatus('No se pudo cargar el lector de códigos. Usa "Manual" mientras tanto.', 'error');
+      return;
+    }
+    try {
+      const ZXingLib = window.ZXingBrowser || window.ZXing;
+      codeReader = new ZXingLib.BrowserMultiFormatReader();
+
+      stageOff.style.display = 'none';
+      video.style.display = 'block';
+      reticle.style.display = 'flex';
+      scanning = true;
+      toggleBtn.textContent = 'Detener';
+      toggleBtn.classList.add('is-stop');
+      setStatus('Apunta la cámara al código de barras.', '');
+
+      const devices = await ZXingLib.BrowserCodeReader.listVideoInputDevices();
+      let deviceId = null;
+      const back = devices.find(d => /back|rear|environment/i.test(d.label));
+      deviceId = back ? back.deviceId : (devices[0] ? devices[0].deviceId : null);
+
+      codeReader.decodeFromVideoDevice(deviceId, video, (result, err) => {
+        if (result) {
+          const text = result.getText();
+          const now = Date.now();
+          if (text === lastScanCode && (now - lastScanTime) < 3000) return;
+          lastScanCode = text;
+          lastScanTime = now;
+          addScan(text);
+        }
+      });
+    } catch (e) {
+      setStatus('No se pudo acceder a la cámara. Revisa permisos, o usa "Manual".', 'error');
+      stopScanning();
+    }
+  }
+
+  function stopScanning() {
+    scanning = false;
+    toggleBtn.textContent = 'Escanear';
+    toggleBtn.classList.remove('is-stop');
+    stageOff.style.display = 'flex';
+    video.style.display = 'none';
+    reticle.style.display = 'none';
+    setStatus('', '');
+    if (codeReader) {
+      try { codeReader.reset(); } catch (e) {}
+      codeReader = null;
+    }
+  }
+
+  toggleBtn.addEventListener('click', () => {
+    if (scanning) stopScanning();
+    else startScanning();
+  });
+
+  manualBtn.addEventListener('click', () => {
+    manualEntry.classList.toggle('is-open');
+    if (manualEntry.classList.contains('is-open')) manualInput.focus();
+  });
+
+  manualSubmit.addEventListener('click', () => {
+    addManual(manualInput.value);
+    manualInput.value = '';
+  });
+
+  manualInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      addManual(manualInput.value);
+      manualInput.value = '';
+    }
+  });
+
+  clearBtn.addEventListener('click', () => {
+    if (items.length === 0) return;
+    items = [];
+    persist();
+    renderList();
+    showToast('Lista borrada');
+  });
+
+  renderList();
+})();
+</script>
+
+</body>
+</html>
